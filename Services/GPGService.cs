@@ -1,93 +1,115 @@
-﻿namespace GPGTest.Services;
-
-using Org.BouncyCastle.Bcpg;
-using Org.BouncyCastle.Bcpg.OpenPgp;
-using Org.BouncyCastle.Security;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Text;
-public class GpgService
+
+namespace GPGTest.Services
 {
-    private readonly string _publicKeyPath;
-    private readonly string _privateKeyPath;
-
-    public GpgService(string publicKeyPath, string privateKeyPath)
+    public class GpgService
     {
-        _publicKeyPath = publicKeyPath;
-        _privateKeyPath = privateKeyPath;
-    }
+        private readonly string _publicKeyPath;
+        private readonly string _privateKeyPath;
 
-    // Encrypts the input string using the public key
-    public string Encrypt(string input)
-    {
-        using (var publicKeyStream = File.OpenRead(_publicKeyPath))
-        using (var outputStream = new MemoryStream())
+        public GpgService(string publicKeyPath, string privateKeyPath)
         {
-            var clearData = Encoding.UTF8.GetBytes(input); // Convert input to UTF-8 bytes
-            PgpPublicKey pubKey = ReadPublicKey(publicKeyStream);
-
-            var encryptedDataGenerator = new PgpEncryptedDataGenerator(SymmetricKeyAlgorithmTag.Aes256, true, new SecureRandom());
-            encryptedDataGenerator.AddMethod(pubKey);
-
-            using (var armoredOutputStream = new ArmoredOutputStream(outputStream))
-            using (var encryptionStream = encryptedDataGenerator.Open(armoredOutputStream, clearData.Length))
-            {
-                encryptionStream.Write(clearData, 0, clearData.Length);
-            }
-
-            return Convert.ToBase64String(outputStream.ToArray()); // Return base64 encoded string
+            _publicKeyPath = publicKeyPath;
+            _privateKeyPath = privateKeyPath;
         }
-    }
 
-    // Decrypts the encrypted text using the private key and passphrase
-    public string Decrypt(string encryptedText, string passphrase)
-    {
-        using (var privateKeyStream = File.OpenRead(_privateKeyPath))
-        using (var inputStream = new MemoryStream(Convert.FromBase64String(encryptedText)))
+        // Encrypts the input string using the public key
+        public string Encrypt(string input)
         {
-            PgpObjectFactory pgpF = new PgpObjectFactory(PgpUtilities.GetDecoderStream(inputStream));
-            PgpEncryptedDataList enc = (PgpEncryptedDataList)(pgpF.NextPgpObject() ?? pgpF.NextPgpObject());
+            // Write input to a temporary file
+            string tempInputFile = Path.GetTempFileName();
+            string tempOutputFile = Path.GetTempFileName();
+            File.WriteAllText(tempInputFile, input);
 
-            PgpSecretKeyRingBundle pgpSec = new PgpSecretKeyRingBundle(PgpUtilities.GetDecoderStream(privateKeyStream));
+            // Call GPG to encrypt the file
+            string arguments = $"--encrypt --recipient-file \"{_publicKeyPath}\" --output \"{tempOutputFile}\" \"{tempInputFile}\"";
+            ExecuteGpgCommand(arguments);
 
-            foreach (PgpPublicKeyEncryptedData pked in enc.GetEncryptedDataObjects())
+            // Read and return the encrypted file as base64 string
+            byte[] encryptedBytes = File.ReadAllBytes(tempOutputFile);
+            string encryptedBase64 = Convert.ToBase64String(encryptedBytes);
+
+            // Clean up temporary files
+            File.Delete(tempInputFile);
+            File.Delete(tempOutputFile);
+
+            return encryptedBase64;
+        }
+
+        // Decrypts the encrypted text using the private key and passphrase
+        public string Decrypt(string encryptedText, string passphrase)
+        {
+            // Write encrypted base64 string to a temporary file
+            string tempInputFile = Path.GetTempFileName();
+            string tempOutputFile = Path.GetTempFileName();
+            byte[] encryptedBytes = Convert.FromBase64String(encryptedText);
+            File.WriteAllBytes(tempInputFile, encryptedBytes);
+
+            // Call GPG to decrypt the file
+            string arguments = $"--batch --passphrase \"{passphrase}\" --decrypt --output \"{tempOutputFile}\" \"{tempInputFile}\"";
+            ExecuteGpgCommand(arguments);
+
+            // Read and return the decrypted file contents
+            string decryptedText = File.ReadAllText(tempOutputFile);
+
+            // Clean up temporary files
+            File.Delete(tempInputFile);
+            File.Delete(tempOutputFile);
+
+            return decryptedText;
+        }
+
+        // Executes GPG command with provided arguments
+        private void ExecuteGpgCommand(string arguments)
+        {
+            var process = new Process
             {
-                PgpPrivateKey privateKey = FindSecretKey(pgpSec, pked.KeyId, passphrase.ToCharArray());
-                if (privateKey != null)
+                StartInfo = new ProcessStartInfo
                 {
-                    using (var clearStream = pked.GetDataStream(privateKey))
-                    using (var reader = new StreamReader(clearStream))
-                    {
-                        return reader.ReadToEnd(); // Return decrypted text
-                    }
+                    FileName = "gpg",
+                    Arguments = $"--batch --yes {arguments}", // Ensure non-interactive mode
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            var output = new StringBuilder();
+            var error = new StringBuilder();
+
+            process.OutputDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                    output.AppendLine(e.Data);
+            };
+
+            process.ErrorDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                    error.AppendLine(e.Data);
+            };
+
+            try
+            {
+                process.Start();
+
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                process.WaitForExit();
+
+                if (process.ExitCode != 0)
+                {
+                    throw new Exception($"GPG command failed: {error.ToString()}");
                 }
             }
-        }
-
-        throw new ArgumentException("Secret key for decryption not found.");
-    }
-
-    // Reads the public key from the stream
-    private PgpPublicKey ReadPublicKey(Stream input)
-    {
-        PgpPublicKeyRingBundle pgpPub = new PgpPublicKeyRingBundle(PgpUtilities.GetDecoderStream(input));
-        foreach (PgpPublicKeyRing keyRing in pgpPub.GetKeyRings())
-        {
-            foreach (PgpPublicKey key in keyRing.GetPublicKeys())
+            catch (Exception ex)
             {
-                if (key.IsEncryptionKey)
-                {
-                    return key;
-                }
+                throw new Exception($"Failed to execute GPG command: {ex.Message}. Error output: {error.ToString()}");
             }
         }
-        throw new ArgumentException("Encryption key not found in the public key ring.");
-    }
-
-    // Finds the secret (private) key from the key ring bundle using the key ID and passphrase
-    private PgpPrivateKey FindSecretKey(PgpSecretKeyRingBundle pgpSec, long keyId, char[] passphrase)
-    {
-        PgpSecretKey secretKey = pgpSec.GetSecretKey(keyId);
-        return secretKey?.ExtractPrivateKey(passphrase);
     }
 }
-
