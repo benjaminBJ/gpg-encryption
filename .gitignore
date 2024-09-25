@@ -397,4 +397,4 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 
-Keys/
+Keys/private.asc
