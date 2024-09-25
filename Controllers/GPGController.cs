@@ -3,6 +3,7 @@
 using GPGTest.Models;
 using GPGTest.Services;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Authentication;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -19,14 +20,38 @@ public class GpgController : ControllerBase
     [HttpPost("encrypt")]
     public IActionResult Encrypt([FromBody] EncryptRequest data)
     {
-        var encryptedText = _gpgEncryptionHelper.Encrypt(data.PlainText);
-        return Ok(encryptedText);
+        try {
+            var encryptedText = _gpgEncryptionHelper.Encrypt(data.PlainText);
+            return Ok(encryptedText);
+        }
+        catch (Exception ex)
+        {
+            return MapExceptionsToHttp(ex);
+        }
     }
 
     [HttpPost("decrypt")]
     public IActionResult Decrypt([FromBody] DecryptRequest request)
     {
-        var decryptedText = _gpgEncryptionHelper.Decrypt(request.EncryptedText, request.Passphrase);
-        return Ok(decryptedText);
+        try
+        {
+            var decryptedText = _gpgEncryptionHelper.Decrypt(request.EncryptedText, request.Passphrase);
+            return Ok(decryptedText);
+        }
+        catch (Exception ex)
+        {
+            return MapExceptionsToHttp(ex);
+        }
     }
-}
+
+    private IActionResult MapExceptionsToHttp(Exception ex)
+    {
+        if (ex.Message != null)
+        {
+            return StatusCode(500, new { message = ex.Message });
+
+        }
+        return StatusCode(500, new { message = "An error occurred" });
+
+    }
+   }
