@@ -48,8 +48,7 @@ namespace GPGTest.Services
             File.WriteAllBytes(tempInputFile, encryptedBytes);
 
             // Call GPG to decrypt the file
-            string arguments = $"--batch --passphrase \"{passphrase}\" --decrypt --output \"{tempOutputFile}\" \"{tempInputFile}\"";
-            ExecuteGpgCommand(arguments);
+            string arguments = $"--batch --yes --passphrase \"{passphrase}\" --pinentry-mode loopback --decrypt --output \"{tempOutputFile}\" \"{tempInputFile}\""; ExecuteGpgCommand(arguments);
 
             // Read and return the decrypted file contents
             string decryptedText = File.ReadAllText(tempOutputFile);
