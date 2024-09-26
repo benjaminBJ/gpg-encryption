@@ -13,7 +13,7 @@ public class GpgEncryptionHelper
     public GpgEncryptionHelper(string publicKeyPath, string privateKeyPath)
     {
         _publicKeyPath = publicKeyPath;
-        _privateKeyPath = publicKeyPath;
+        _privateKeyPath = privateKeyPath;
 
         // Define a folder for temporary files within the deployment directory
         _tempFolderPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "TempFiles");
@@ -52,8 +52,13 @@ public class GpgEncryptionHelper
         byte[] encryptedBytes = Convert.FromBase64String(encryptedText);
         File.WriteAllBytes(tempInputFile, encryptedBytes);
 
-        string arguments = $"--batch --yes --passphrase \"{passphrase}\" --pinentry-mode loopback --decrypt --output \"{tempOutputFile}\" \"{tempInputFile}\""; ExecuteGpgCommand(arguments);
-        ExecuteGpgCommand(arguments);
+        // Import private key into GPG keyring
+        string importPrivateKeyArgs = $"--import \"{_privateKeyPath}\"";
+        ExecuteGpgCommand(importPrivateKeyArgs);
+
+        // Decrypt the file
+        string decryptArguments = $"--batch --yes --passphrase \"{passphrase}\" --pinentry-mode loopback --decrypt --output \"{tempOutputFile}\" \"{tempInputFile}\"";
+        ExecuteGpgCommand(decryptArguments);
 
         string decryptedText = File.ReadAllText(tempOutputFile);
 
@@ -62,6 +67,7 @@ public class GpgEncryptionHelper
 
         return decryptedText;
     }
+
 
     private void ExecuteGpgCommand(string arguments)
     {
